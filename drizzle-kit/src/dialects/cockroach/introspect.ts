@@ -537,6 +537,35 @@ export const fromDatabase = async (
 			throw err;
 		});
 
+	// The implicit key columns of each index. On a REGIONAL BY ROW table, or any other implicitly partitioned one,
+	// CockroachDB puts the partitioning column in front of every primary key, unique and index key in
+	// pg_constraint.conkey and pg_index.indkey, though it isn't part of the key the user declared.
+	// information_schema.statistics, which SHOW INDEXES reads, marks those columns implicit. It also marks the primary
+	// key columns a secondary index stores after its own, but those aren't in conkey or indkey.
+	const implicitKeyColumnsQuery = filteredTables.length === 0
+		? Promise.resolve<{ table_schema: string; table_name: string; index_name: string; column_name: string }[]>([])
+		: db
+			.query<{ table_schema: string; table_name: string; index_name: string; column_name: string }>(
+				`SELECT
+			table_schema,
+			table_name,
+			index_name,
+			column_name
+		FROM information_schema.statistics
+		WHERE implicit = 'YES'
+			AND table_schema in (${filteredNamespacesStringForSQL})
+			AND table_name in (${filteredTables.map((it) => `'${it.name}'`).join(', ')})
+	`,
+			)
+			.then((rows) => {
+				queryCallback('implicitKeyColumns', rows, null);
+				return rows;
+			})
+			.catch((err) => {
+				queryCallback('implicitKeyColumns', [], err);
+				throw err;
+			});
+
 	// pg_get_viewdef costs CockroachDB ~15 ms per view, so only for the views, and only when there are any.
 	const viewDefinitionsQuery = viewsIds.length === 0
 		? Promise.resolve<{ oid: number; definition: string | null }[]>([])
@@ -562,11 +591,12 @@ export const fromDatabase = async (
 		policiesList,
 		roleNamesList,
 		rolesList,
-		constraintsList,
+		rawConstraintsList,
 		rawColumnsList,
 		extraColumnDataTypesList,
 		defaultsList,
 		viewDefinitionsList,
+		implicitKeyColumnsList,
 	] = await Promise.all([
 		dependQuery,
 		enumsQuery,
@@ -579,6 +609,7 @@ export const fromDatabase = async (
 		extraColumnDataTypesQuery,
 		defaultsQuery,
 		viewDefinitionsQuery,
+		implicitKeyColumnsQuery,
 	]);
 
 	const compareLower = (a: string, b: string) => {
@@ -676,6 +707,38 @@ export const fromDatabase = async (
 	const dependsById = mapBy(dependList, (it) => it.oid);
 	const defaultsByPosition = mapBy(defaultsList, (it) => columnPosition(it.tableId, it.ordinality));
 	const columnsByPosition = mapBy(columnsList, (it) => columnPosition(it.tableId, it.ordinality));
+
+	// Keys are read as declared: the implicit columns in front of an index's key (see implicitKeyColumnsQuery) are
+	// dropped from it.
+	const indexKey = (tableId: number, indexName: string) => JSON.stringify([tableId, indexName]);
+	const implicitKeyColumnsByIndex = new Map<string, Set<string>>();
+	for (const it of implicitKeyColumnsList) {
+		const table = filteredTables.find((t) => t.schema === it.table_schema && t.name === it.table_name);
+		if (!table) continue;
+		const key = indexKey(table.oid, it.index_name);
+		const set = implicitKeyColumnsByIndex.get(key) ?? new Set<string>();
+		set.add(it.column_name);
+		implicitKeyColumnsByIndex.set(key, set);
+	}
+	const implicitKeyPrefixLength = (tableId: number, indexId: number, ordinals: number[]) => {
+		const index = indexRelations.find((it) => it.oid === indexId);
+		const implicit = index ? implicitKeyColumnsByIndex.get(indexKey(tableId, index.name)) : undefined;
+		if (!implicit) return 0;
+		let length = 0;
+		while (
+			length < ordinals.length
+			&& implicit.has(columnsByPosition.get(columnPosition(tableId, ordinals[length]))?.name ?? '')
+		) length += 1;
+		return length;
+	};
+	const constraintsList = rawConstraintsList.map((it) =>
+		it.type === 'p' || it.type === 'u'
+			? {
+				...it,
+				columnsOrdinals: it.columnsOrdinals.slice(implicitKeyPrefixLength(it.tableId, it.indexId, it.columnsOrdinals)),
+			}
+			: it
+	);
 	// JSON keeps schema, table and column apart, so no names can collide
 	const extraColumnDataTypesByColumn = mapBy(
 		extraColumnDataTypesList,
@@ -1042,7 +1105,13 @@ export const fromDatabase = async (
 		.sort((a, b) => a.schemaId - b.schemaId || compareLower(a.name, b.name));
 
 	for (const idx of idxs) {
-		const { metadata, accessMethod } = idx;
+		const implicitPrefix = implicitKeyPrefixLength(idx.metadata.tableId, idx.oid, idx.metadata.columnOrdinals);
+		const metadata = {
+			...idx.metadata,
+			columnOrdinals: idx.metadata.columnOrdinals.slice(implicitPrefix),
+			options: idx.metadata.options.slice(implicitPrefix),
+		};
+		const { accessMethod } = idx;
 
 		// filter for drizzle only?
 		const forPK = metadata.isPrimary && pkIndexIds.has(idx.oid);

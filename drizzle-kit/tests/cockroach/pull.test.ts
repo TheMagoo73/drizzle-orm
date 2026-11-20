@@ -35,8 +35,8 @@ import {
 } from 'drizzle-orm/cockroach-core';
 import { fromDatabaseForDrizzle } from 'src/dialects/cockroach/introspect';
 import { prepareEntityFilter } from 'src/dialects/pull-utils';
-import { diffIntrospect, push, test } from 'tests/cockroach/mocks';
-import { expect } from 'vitest';
+import { clusterHasRegions, diffIntrospect, push, test } from 'tests/cockroach/mocks';
+import { describe, expect } from 'vitest';
 
 test.concurrent('basic introspect test', async ({ dbc: db }) => {
 	const schema = {
@@ -1383,4 +1383,151 @@ test('Issue 6493', async ({ db }) => {
 
 	expect(pushSqlStatements).toStrictEqual([]);
 	expect(generateSqlStatements).toStrictEqual([]);
+});
+
+// On a REGIONAL BY ROW table, CockroachDB puts the region column in front of every primary key, unique and index key
+// (implicit partitioning). Pull reads the keys as declared.
+describe.skipIf(!(await clusterHasRegions()))('pull REGIONAL BY ROW tables', () => {
+	test('keeps the primary key of a REGIONAL BY ROW table on its declared columns', async ({ mrdb }) => {
+		await mrdb.query(`CREATE TABLE "users" ("id" int4 PRIMARY KEY, "name" string);`);
+		await mrdb.query(`ALTER TABLE "users" SET LOCALITY REGIONAL BY ROW;`);
+
+		const { ddlAfterPull, pushSqlStatements, generateSqlStatements } = await diffIntrospect(
+			mrdb,
+			{},
+			'rbr-default-pk',
+		);
+
+		expect(ddlAfterPull.pks.list()).toStrictEqual([
+			{
+				entityType: 'pks',
+				schema: 'public',
+				table: 'users',
+				name: 'users_pkey',
+				columns: ['id'],
+				nameExplicit: true,
+			},
+		]);
+		expect(pushSqlStatements).toStrictEqual([]);
+		expect(generateSqlStatements).toStrictEqual([]);
+	});
+
+	test('keeps the primary key of a REGIONAL BY ROW AS region table on its declared columns', async ({ mrdb }) => {
+		await mrdb.query(
+			`CREATE TABLE "users" (
+				"id" int4 PRIMARY KEY,
+				"region" crdb_internal_region NOT NULL
+			);`,
+		);
+		await mrdb.query(`ALTER TABLE "users" SET LOCALITY REGIONAL BY ROW AS "region";`);
+
+		const { ddlAfterPull, pushSqlStatements, generateSqlStatements } = await diffIntrospect(
+			mrdb,
+			{},
+			'rbr-as-region-pk',
+		);
+
+		expect(ddlAfterPull.pks.list()).toStrictEqual([
+			{
+				entityType: 'pks',
+				schema: 'public',
+				table: 'users',
+				name: 'users_pkey',
+				columns: ['id'],
+				nameExplicit: true,
+			},
+		]);
+		expect(pushSqlStatements).toStrictEqual([]);
+		expect(generateSqlStatements).toStrictEqual([]);
+	});
+
+	test('pulls uniques and indexes of a REGIONAL BY ROW AS region table without the region prefix', async ({ mrdb }) => {
+		await mrdb.query(
+			`CREATE TABLE "users" (
+				"id" int4 PRIMARY KEY,
+				"region" crdb_internal_region NOT NULL,
+				"first_name" string,
+				"last_name" string,
+				"age" int4,
+				CONSTRAINT "users_name_key" UNIQUE ("first_name", "last_name"),
+				INDEX "users_age_idx" ("age" DESC)
+			);`,
+		);
+		await mrdb.query(`ALTER TABLE "users" SET LOCALITY REGIONAL BY ROW AS "region";`);
+
+		const { ddlAfterPull, pushSqlStatements, generateSqlStatements } = await diffIntrospect(
+			mrdb,
+			{},
+			'rbr-as-region-indexes',
+		);
+
+		expect(ddlAfterPull.indexes.list().map(({ name, isUnique, columns }) => ({ name, isUnique, columns })))
+			.toStrictEqual([
+				{
+					name: 'users_age_idx',
+					isUnique: false,
+					columns: [{ value: 'age', isExpression: false, asc: false }],
+				},
+				{
+					name: 'users_name_key',
+					isUnique: true,
+					columns: [
+						{ value: 'first_name', isExpression: false, asc: true },
+						{ value: 'last_name', isExpression: false, asc: true },
+					],
+				},
+			]);
+		expect(pushSqlStatements).toStrictEqual([]);
+		expect(generateSqlStatements).toStrictEqual([]);
+	});
+
+	test('pulls a single-column UNIQUE on a REGIONAL BY ROW table as a column-level unique', async ({ mrdb }) => {
+		await mrdb.query(`CREATE TABLE "users" ("id" int4 PRIMARY KEY, "email" string UNIQUE);`);
+		await mrdb.query(`ALTER TABLE "users" SET LOCALITY REGIONAL BY ROW;`);
+
+		const filter = prepareEntityFilter('cockroach', {
+			tables: undefined,
+			schemas: undefined,
+			entities: undefined,
+			extensions: undefined,
+		}, []);
+		const { columns } = await fromDatabaseForDrizzle(mrdb, filter, () => {}, {
+			table: '__drizzle_migrations',
+			schema: 'drizzle',
+		});
+
+		expect(columns.map(({ name, unique, uniqueName }) => ({ name, unique, uniqueName }))).toStrictEqual([
+			{ name: 'id', unique: false, uniqueName: null },
+			{ name: 'email', unique: true, uniqueName: 'users_email_key' },
+		]);
+
+		const { pushSqlStatements, generateSqlStatements } = await diffIntrospect(mrdb, {}, 'rbr-column-unique');
+		expect(pushSqlStatements).toStrictEqual([]);
+		expect(generateSqlStatements).toStrictEqual([]);
+	});
+
+	test('pulls the keys of a table moved from REGIONAL BY ROW to GLOBAL', async ({ mrdb }) => {
+		await mrdb.query(
+			`CREATE TABLE "users" ("id" int4 PRIMARY KEY, "email" string UNIQUE, "age" int4, INDEX "users_age_idx" ("age"));`,
+		);
+		await mrdb.query(`ALTER TABLE "users" SET LOCALITY REGIONAL BY ROW;`);
+		await mrdb.query(`ALTER TABLE "users" SET LOCALITY GLOBAL;`);
+
+		const { ddlAfterPull, pushSqlStatements, generateSqlStatements } = await diffIntrospect(
+			mrdb,
+			{},
+			'rbr-moved-to-global',
+		);
+
+		expect(ddlAfterPull.pks.list().map(({ name, columns }) => ({ name, columns }))).toStrictEqual([
+			{ name: 'users_pkey', columns: ['id'] },
+		]);
+		expect(ddlAfterPull.indexes.list().map(({ name, isUnique, columns }) => ({ name, isUnique, columns })))
+			.toStrictEqual([
+				{ name: 'users_age_idx', isUnique: false, columns: [{ value: 'age', isExpression: false, asc: true }] },
+				{ name: 'users_email_key', isUnique: true, columns: [{ value: 'email', isExpression: false, asc: true }] },
+			]);
+		expect(pushSqlStatements).toStrictEqual([]);
+		expect(generateSqlStatements).toStrictEqual([]);
+	});
 });
