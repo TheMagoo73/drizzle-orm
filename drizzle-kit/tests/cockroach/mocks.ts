@@ -40,6 +40,7 @@ import { mockResolver } from 'src/utils/mocks';
 import '../../src/@types/utils';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { Pool, PoolClient } from 'pg';
+import { withRbrRewriteComments } from 'src/cli/commands/generate-cockroach';
 import { introspect } from 'src/cli/commands/pull-cockroach';
 import { localityWarnings, suggestions } from 'src/cli/commands/push-cockroach';
 import { runWithCliContext } from 'src/cli/context';
@@ -143,7 +144,7 @@ export const diff = async (
 
 	const renames = new Set(renamesArr);
 
-	const { sqlStatements, statements, groupedStatements } = await ddlDiff(
+	const { statements, groupedStatements } = await ddlDiff(
 		ddl1,
 		ddl2,
 		mockResolver(renames),
@@ -160,7 +161,13 @@ export const diff = async (
 		'default',
 		metadata,
 	);
-	return { sqlStatements, statements, groupedStatements, next: ddl2 };
+	// The SQL generate writes, with its REGIONAL BY ROW rewrite comments.
+	return {
+		sqlStatements: withRbrRewriteComments(groupedStatements),
+		statements,
+		groupedStatements,
+		next: ddl2,
+	};
 };
 
 export const pushM = async (config: {

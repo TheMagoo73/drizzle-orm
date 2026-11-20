@@ -24,7 +24,7 @@ export const prepareSnapshot = async (
 	const prevSnapshot = snapshots.length === 0
 		? drySnapshot
 		: snapshotValidator.strict(
-			upToV2(JSON.parse(readFileSync(snapshots[snapshots.length - 1]).toString())),
+			upToV2(JSON.parse(readFileSync(snapshots[snapshots.length - 1]).toString())).snapshot,
 		);
 
 	const ddlPrev = createDDL();

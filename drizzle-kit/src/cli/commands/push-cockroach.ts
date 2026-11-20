@@ -16,7 +16,8 @@ import type {
 import { interimToDDL } from '../../dialects/cockroach/ddl';
 import { ddlDiff } from '../../dialects/cockroach/diff';
 import { fromDrizzleSchema, prepareFromSchemaFiles } from '../../dialects/cockroach/drizzle';
-import type { JsonStatement } from '../../dialects/cockroach/statements';
+import { quotedTableName } from '../../dialects/cockroach/grammar';
+import { type JsonStatement, movesRegionalByRow } from '../../dialects/cockroach/statements';
 import { extractCrdbExisting } from '../../dialects/drizzle';
 import { prepareEntityFilter } from '../../dialects/pull-utils';
 import type { DB } from '../../utils';
@@ -134,15 +135,16 @@ export const handle = async (
 		return { status: 'no_changes' as const, dialect: 'cockroach' };
 	}
 
-	const suggestionHints = await suggestions(db, jsonStatements, hints);
-	if (hints.hasMissingHints()) {
-		return hints.toResponse();
-	}
-
-	// Shown, not asked: a move to or from REGIONAL BY ROW loses no data.
+	// Shown, not asked: a move to or from REGIONAL BY ROW loses no data. Printed before the data-loss hints, so a
+	// push that stops for them still warns.
 	const rewriteWarnings = localityWarnings(jsonStatements);
 	if (rewriteWarnings.length > 0) {
 		humanLog(rewriteWarnings.map((it) => `[${chalk.yellow('!')}] ${it}`).join('\n'));
+	}
+
+	const suggestionHints = await suggestions(db, jsonStatements, hints);
+	if (hints.hasMissingHints()) {
+		return hints.toResponse();
 	}
 
 	if (explain) {
@@ -179,16 +181,9 @@ export const handle = async (
 
 const quote = (name: string) => `"${name}"`;
 
-const quoteTable = ({ schema, name }: { schema?: string; name: string }) => {
-	return schema && schema !== 'public' ? `${quote(schema)}.${quote(name)}` : quote(name);
-};
-
 // Warnings that don't block push: changes that lose no data but can take a while on a large table.
 export const localityWarnings = (jsonStatements: JsonStatement[]): string[] => {
-	return jsonStatements
-		.filter((it) => it.type === 'alter_locality')
-		.filter((it) => it.from?.type === 'regionalByRow' || it.to?.type === 'regionalByRow')
-		.map((it) => regionalByRowRewriteWarning(quoteTable(it)));
+	return jsonStatements.filter(movesRegionalByRow).map((it) => regionalByRowRewriteWarning(quotedTableName(it)));
 };
 
 export const suggestions = async (db: DB, jsonStatements: JsonStatement[], hints: HintsHandler) => {
@@ -199,7 +194,7 @@ export const suggestions = async (db: DB, jsonStatements: JsonStatement[], hints
 		schemas: jsonStatements.filter((it) => it.type === 'rename_schema'),
 		tables: jsonStatements.filter((it) => it.type === 'rename_table'),
 		moves: jsonStatements.filter((it) => it.type === 'move_table'),
-	}, quoteTable);
+	}, quotedTableName);
 
 	const filtered = jsonStatements.filter((it) => {
 		// discussion -

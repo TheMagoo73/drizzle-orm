@@ -185,6 +185,11 @@ export interface JsonAlterLocality {
 	to: Locality;
 }
 
+// A move to or from REGIONAL BY ROW, which rewrites the table's primary index.
+export const movesRegionalByRow = (st: JsonStatement): st is JsonAlterLocality => {
+	return st.type === 'alter_locality' && (st.from?.type === 'regionalByRow' || st.to?.type === 'regionalByRow');
+};
+
 export interface JsonAlterRLS {
 	type: 'alter_rls';
 	schema: string;

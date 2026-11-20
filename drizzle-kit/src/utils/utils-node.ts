@@ -182,7 +182,7 @@ const cockroachSnapshotValidator = (snapshot: object): ValidationResult => {
 	const versionError = assertVersion(snapshot, Number(cockroachLatestVersion));
 	if (versionError === 'unsupported') return { status: versionError };
 
-	const res = cockroachValidator.parse(cockroachUpToV2(snapshot));
+	const res = cockroachValidator.parse(cockroachUpToV2(snapshot).snapshot);
 	if (!res.success) {
 		return { status: 'malformed', errors: res.errors ?? [] };
 	}

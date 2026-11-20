@@ -14,7 +14,9 @@ import type {
 import { createDDL, interimToDDL } from '../../dialects/cockroach/ddl';
 import { ddlDiff, ddlDiffDry } from '../../dialects/cockroach/diff';
 import { fromDrizzleSchema, prepareFromSchemaFiles } from '../../dialects/cockroach/drizzle';
+import { quotedTableName } from '../../dialects/cockroach/grammar';
 import { prepareSnapshot } from '../../dialects/cockroach/serializer';
+import { type JsonStatement, movesRegionalByRow } from '../../dialects/cockroach/statements';
 import { prepareOutFolder } from '../../utils/utils-node';
 import { outputFormat } from '../context';
 import { CommandOutputCliError } from '../errors';
@@ -22,6 +24,7 @@ import { resolver } from '../prompts';
 import { cockroachSchemaError, cockroachSchemaWarning, explain, explainJsonOutput, humanLog } from '../views';
 import { writeResult } from './generate-common';
 import type { ExportConfig, GenerateConfig } from './utils';
+import { regionalByRowRewriteWarning } from './warnings';
 
 export const handle = async (config: GenerateConfig) => {
 	const { out: outFolder, filenames } = config;
@@ -68,7 +71,7 @@ export const handle = async (config: GenerateConfig) => {
 	if (!config.explain) {
 		return writeResult({
 			snapshot: snapshot,
-			sqlStatements,
+			sqlStatements: withRbrRewriteComments(groupedStatements),
 			outFolder,
 			name: config.name,
 			breakpoints: config.breakpoints,
@@ -91,6 +94,22 @@ export const handle = async (config: GenerateConfig) => {
 	}
 
 	return { status: 'ok' as const, dialect: 'cockroach' };
+};
+
+// The comment a migration has above a move to or from REGIONAL BY ROW: the same text push prints as a warning.
+const rbrRewriteComment = (statement: JsonStatement): string | null => {
+	return movesRegionalByRow(statement) ? `-- ${regionalByRowRewriteWarning(quotedTableName(statement))}\n` : null;
+};
+
+// A migration's SQL: each statement's SQL, with the rewrite comment above a move to or from REGIONAL BY ROW.
+// Generate adds it here, after the diff, so push (which shares the diff) never sends it.
+export const withRbrRewriteComments = (
+	groupedStatements: { jsonStatement: JsonStatement; sqlStatements: string[] }[],
+): string[] => {
+	return groupedStatements.flatMap(({ jsonStatement, sqlStatements }) => {
+		const comment = rbrRewriteComment(jsonStatement);
+		return comment ? [comment + sqlStatements[0], ...sqlStatements.slice(1)] : sqlStatements;
+	});
 };
 
 export const handleExport = async (config: ExportConfig) => {

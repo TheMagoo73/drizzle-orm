@@ -1,5 +1,5 @@
 import { escapeSingleQuotes, type Simplify } from '../../utils';
-import { defaultNameForPK, defaults, defaultToSQL, isDefaultAction, localityToSQL } from './grammar';
+import { defaultNameForPK, defaults, defaultToSQL, isDefaultAction, localityToSQL, quotedTableName } from './grammar';
 import type { JsonStatement } from './statements';
 
 export const convertor = <
@@ -712,8 +712,7 @@ const recreatePolicy = convertor('recreate_policy', (st) => {
 });
 
 const alterLocalityConvertor = convertor('alter_locality', (st) => {
-	const key = st.schema !== 'public' ? `"${st.schema}"."${st.name}"` : `"${st.name}"`;
-	return `ALTER TABLE ${key} SET LOCALITY ${localityToSQL(st.to)};`;
+	return `ALTER TABLE ${quotedTableName(st)} SET LOCALITY ${localityToSQL(st.to)};`;
 });
 
 const toggleRlsConvertor = convertor('alter_rls', (st) => {
@@ -781,17 +780,7 @@ const convertors = [
 	alterColumnDropNotNullConvertor,
 ];
 
-// A move to or from REGIONAL BY ROW rewrites the table's primary index, so a generated migration says so above it.
-// Push warns about the same change instead (see push-cockroach).
-const commentFor = (statement: JsonStatement): string | null => {
-	if (statement.type !== 'alter_locality') return null;
-	if (statement.from?.type !== 'regionalByRow' && statement.to?.type !== 'regionalByRow') return null;
-	const key = statement.schema !== 'public' ? `"${statement.schema}"."${statement.name}"` : `"${statement.name}"`;
-	return `-- ${key} moves to or from REGIONAL BY ROW: CockroachDB rewrites the table's primary index in a schema change job.
-`;
-};
-
-export function fromJson(statements: JsonStatement[], mode: 'default' | 'push' = 'default') {
+export function fromJson(statements: JsonStatement[]) {
 	const grouped = statements
 		.map((statement) => {
 			const filtered = convertors.filter((it) => {
@@ -803,8 +792,6 @@ export function fromJson(statements: JsonStatement[], mode: 'default' | 'push' =
 
 			const sqlStatements = convertor.convert(statement as any);
 			const statements = typeof sqlStatements === 'string' ? [sqlStatements] : sqlStatements;
-			const comment = mode === 'default' ? commentFor(statement) : null;
-			if (comment) statements[0] = comment + statements[0];
 			return { jsonStatement: statement, sqlStatements: statements };
 		})
 		.filter((it) => it !== null);

@@ -995,7 +995,7 @@ export const ddlDiff = async (
 	jsonStatements.push(...dropSequences);
 	jsonStatements.push(...dropSchemas);
 
-	const { groupedStatements, sqlStatements } = fromJson(jsonStatements, mode);
+	const { groupedStatements, sqlStatements } = fromJson(jsonStatements);
 
 	const renames = prepareMigrationRenames([
 		...renameSchemas,

@@ -1,5 +1,14 @@
 import { sql } from 'drizzle-orm';
-import { cockroachTable, crdbRegion, index, int4, locality, string, uniqueIndex } from 'drizzle-orm/cockroach-core';
+import {
+	cockroachTable,
+	crdbRegion,
+	index,
+	int4,
+	locality,
+	snakeCase,
+	string,
+	uniqueIndex,
+} from 'drizzle-orm/cockroach-core';
 import { createDDL } from 'src/dialects/cockroach/ddl';
 import { snapshotValidator } from 'src/dialects/cockroach/snapshot';
 import { ddlToTypeScript } from 'src/dialects/cockroach/typescript';
@@ -30,7 +39,7 @@ describe('snapshot', () => {
 	test('a version-1 snapshot without locality still loads, with the default locality', () => {
 		expect(validatorForDialect('cockroach')(snapshotV1)).toStrictEqual({ status: 'valid' });
 
-		const snapshot = snapshotValidator.strict(upToV2(snapshotV1));
+		const snapshot = snapshotValidator.strict(upToV2(snapshotV1).snapshot);
 		const ddl = createDDL();
 		for (const entity of snapshot.ddl) ddl.entities.push(entity);
 
@@ -77,33 +86,48 @@ describe('diff', () => {
 	});
 
 	// Each pair of the three table localities this slice covers, in both directions: one SET LOCALITY statement.
-	const localities = {
-		default: () => [],
-		global: () => [locality.global()],
-		inRegion: () => [locality.regionalByTable({ in: 'us-east1' })],
+	const unset = { users: cockroachTable('users', { id: int4().primaryKey() }) };
+	const global = { users: cockroachTable('users', { id: int4().primaryKey() }, () => [locality.global()]) };
+	const inRegion = {
+		users: cockroachTable('users', { id: int4().primaryKey() }, () => [
+			locality.regionalByTable({ in: 'us-east1' }),
+		]),
 	};
-	const setLocality = {
-		default: 'ALTER TABLE "users" SET LOCALITY REGIONAL BY TABLE IN PRIMARY REGION;',
-		global: 'ALTER TABLE "users" SET LOCALITY GLOBAL;',
-		inRegion: 'ALTER TABLE "users" SET LOCALITY REGIONAL BY TABLE IN "us-east1";',
-	};
-	const transitions = [
-		['default', 'global'],
-		['default', 'inRegion'],
-		['global', 'default'],
-		['global', 'inRegion'],
-		['inRegion', 'default'],
-		['inRegion', 'global'],
-	] as const;
 
-	test.each(transitions)('%s -> %s emits one SET LOCALITY statement', async (from, to) => {
-		const { sqlStatements } = await diff(
-			{ users: cockroachTable('users', { id: int4().primaryKey() }, localities[from]) },
-			{ users: cockroachTable('users', { id: int4().primaryKey() }, localities[to]) },
-			[],
-		);
+	test('default -> global() emits SET LOCALITY GLOBAL', async () => {
+		const { sqlStatements } = await diff(unset, global, []);
 
-		expect(sqlStatements).toStrictEqual([setLocality[to]]);
+		expect(sqlStatements).toStrictEqual(['ALTER TABLE "users" SET LOCALITY GLOBAL;']);
+	});
+
+	test('default -> regionalByTable({ in }) emits SET LOCALITY REGIONAL BY TABLE IN the region', async () => {
+		const { sqlStatements } = await diff(unset, inRegion, []);
+
+		expect(sqlStatements).toStrictEqual(['ALTER TABLE "users" SET LOCALITY REGIONAL BY TABLE IN "us-east1";']);
+	});
+
+	test('global() -> default emits SET LOCALITY REGIONAL BY TABLE IN PRIMARY REGION', async () => {
+		const { sqlStatements } = await diff(global, unset, []);
+
+		expect(sqlStatements).toStrictEqual(['ALTER TABLE "users" SET LOCALITY REGIONAL BY TABLE IN PRIMARY REGION;']);
+	});
+
+	test('global() -> regionalByTable({ in }) emits SET LOCALITY REGIONAL BY TABLE IN the region', async () => {
+		const { sqlStatements } = await diff(global, inRegion, []);
+
+		expect(sqlStatements).toStrictEqual(['ALTER TABLE "users" SET LOCALITY REGIONAL BY TABLE IN "us-east1";']);
+	});
+
+	test('regionalByTable({ in }) -> default emits SET LOCALITY REGIONAL BY TABLE IN PRIMARY REGION', async () => {
+		const { sqlStatements } = await diff(inRegion, unset, []);
+
+		expect(sqlStatements).toStrictEqual(['ALTER TABLE "users" SET LOCALITY REGIONAL BY TABLE IN PRIMARY REGION;']);
+	});
+
+	test('regionalByTable({ in }) -> global() emits SET LOCALITY GLOBAL', async () => {
+		const { sqlStatements } = await diff(inRegion, global, []);
+
+		expect(sqlStatements).toStrictEqual(['ALTER TABLE "users" SET LOCALITY GLOBAL;']);
 	});
 
 	test('unset and regionalByTable() with no region have no diff', async () => {
@@ -135,9 +159,11 @@ describe('diff', () => {
 	});
 });
 
-// Moving a table to or from REGIONAL BY ROW rewrites its primary index, so generate writes this comment above the statement.
-const rbrComment = (table: string) =>
-	`-- ${table} moves to or from REGIONAL BY ROW: CockroachDB rewrites the table's primary index in a schema change job.\n`;
+// Moving a table to or from REGIONAL BY ROW rewrites its primary index. Push prints this warning, without a prompt,
+// and generate writes it as a comment above the statement.
+const rbrWarning = (table: string) =>
+	`${table} moves to or from REGIONAL BY ROW, so CockroachDB rewrites its primary index in a schema change job. The table takes a schema change lock until it finishes.`;
+const rbrComment = (table: string) => `-- ${rbrWarning(table)}\n`;
 
 describe('diff REGIONAL BY ROW', () => {
 	test('create table with regionalByRow() emits inline LOCALITY REGIONAL BY ROW', async () => {
@@ -274,7 +300,7 @@ describe('diff REGIONAL BY ROW', () => {
 
 	test('a crdbRegion() column never creates or drops the crdb_internal_region type', async () => {
 		const withRegion = {
-			users: cockroachTable('users', { id: int4().primaryKey(), region: crdbRegion() }, (t) => [
+			users: cockroachTable('users', { id: int4().primaryKey(), region: crdbRegion().notNull() }, (t) => [
 				locality.regionalByRow({ as: t.region }),
 			]),
 		};
@@ -284,6 +310,20 @@ describe('diff REGIONAL BY ROW', () => {
 
 		expect(created.statements.map((it) => it.type)).toStrictEqual(['create_table']);
 		expect(dropped.statements.map((it) => it.type)).toStrictEqual(['drop_table']);
+	});
+
+	test('regionalByRow({ as }) names the column by its database name under snake_case casing', async () => {
+		const to = {
+			users: snakeCase.table('users', { id: int4().primaryKey(), homeRegion: crdbRegion().notNull() }, (t) => [
+				locality.regionalByRow({ as: t.homeRegion }),
+			]),
+		};
+
+		const { sqlStatements } = await diff({}, to, []);
+
+		expect(sqlStatements).toStrictEqual([
+			'CREATE TABLE "users" (\n\t"id" int4 PRIMARY KEY,\n\t"home_region" crdb_internal_region NOT NULL\n) LOCALITY REGIONAL BY ROW AS "home_region";\n',
+		]);
 	});
 });
 
@@ -330,10 +370,6 @@ describe.skipIf(!(await clusterHasRegions()))('push', () => {
 		]);
 	});
 });
-
-// Moving to or from REGIONAL BY ROW rewrites the primary index. Push warns, without a prompt.
-const rbrWarning = (table: string) =>
-	`${table} moves to or from REGIONAL BY ROW, so CockroachDB rewrites its primary index in a schema change job. The table takes a schema change lock until it finishes.`;
 
 describe.skipIf(!(await clusterHasRegions()))('push REGIONAL BY ROW', () => {
 	test('create tables with regionalByRow() and regionalByRow({ as }), then a second push is a no-op', async ({ mrdb }) => {
@@ -446,6 +482,26 @@ describe.skipIf(!(await clusterHasRegions()))('push REGIONAL BY ROW', () => {
 		});
 
 		expect(sqlStatements).toStrictEqual(['ALTER TABLE "users" RENAME COLUMN "region" TO "homeRegion";']);
+	});
+
+	test('regionalByRow({ as }) on a computed crdbRegion() column creates the table, then a second push is a no-op', async ({ mrdb }) => {
+		const regionFor = sql.raw(`CASE WHEN country = 'US' THEN '${mrdb.primaryRegion}' ELSE '${mrdb.primaryRegion}' END`);
+		const to = {
+			users: cockroachTable('users', {
+				id: int4().primaryKey(),
+				country: string().notNull(),
+				region: crdbRegion().notNull().generatedAlwaysAs(regionFor),
+			}, (t) => [locality.regionalByRow({ as: t.region })]),
+		};
+
+		const { sqlStatements } = await push({ db: mrdb, to });
+
+		expect(sqlStatements).toStrictEqual([
+			'CREATE TABLE "users" (\n\t"id" int4 PRIMARY KEY,\n\t"country" string NOT NULL,\n'
+			+ `\t"region" crdb_internal_region GENERATED ALWAYS AS (CASE WHEN country = 'US' THEN '${mrdb.primaryRegion}' ELSE '${mrdb.primaryRegion}' END) STORED NOT NULL\n`
+			+ ') LOCALITY REGIONAL BY ROW AS "region";\n',
+		]);
+		// push() runs a second push and expects it to be empty.
 	});
 
 	test("pushes keep a REGIONAL BY ROW table's keys and never touch crdb_internal_region or crdb_region", async ({ mrdb }) => {
@@ -627,6 +683,39 @@ describe.skipIf(!(await clusterHasRegions()))('pull REGIONAL BY ROW', () => {
 		);
 
 		expect(ddlAfterPull.columns.one({ table: 'orders', name: 'region' })?.default).toBe(`'${mrdb.primaryRegion}'`);
+		expect(pushSqlStatements).toStrictEqual([]);
+		expect(generateSqlStatements).toStrictEqual([]);
+	});
+
+	test('regionalByRow({ as }) round-trips with a computed crdbRegion() column', async ({ mrdb }) => {
+		const regionFor = sql.raw(`CASE WHEN country = 'US' THEN '${mrdb.primaryRegion}' ELSE '${mrdb.primaryRegion}' END`);
+		const schema = {
+			users: cockroachTable('users', {
+				id: int4().primaryKey(),
+				country: string().notNull(),
+				region: crdbRegion().notNull().generatedAlwaysAs(regionFor),
+			}, (t) => [locality.regionalByRow({ as: t.region })]),
+		};
+
+		const { pushSqlStatements, generateSqlStatements, ddlAfterPull } = await diffIntrospect(
+			mrdb,
+			schema,
+			'locality-rbr-as-computed',
+		);
+
+		expect(ddlAfterPull.tables.one({ name: 'users' })?.locality).toStrictEqual({
+			type: 'regionalByRow',
+			region: null,
+			as: 'region',
+		});
+		expect(ddlAfterPull.columns.one({ table: 'users', name: 'region' })).toMatchObject({
+			type: 'crdb_internal_region',
+			typeSchema: null,
+			notNull: true,
+			generated: { type: 'stored' },
+		});
+		expect(ddlAfterPull.pks.list().map((it) => it.columns)).toStrictEqual([['id']]);
+		expect(ddlAfterPull.enums.list()).toStrictEqual([]);
 		expect(pushSqlStatements).toStrictEqual([]);
 		expect(generateSqlStatements).toStrictEqual([]);
 	});

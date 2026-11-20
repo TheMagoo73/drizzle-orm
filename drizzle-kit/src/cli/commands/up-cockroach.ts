@@ -13,7 +13,7 @@ export const upCockroachHandler = (out: string): string[] => {
 		const raw = JSON.parse(readFileSync(path).toString());
 		if (raw.version === latestVersion) continue;
 
-		const snapshot = upToV2(raw);
+		const { snapshot } = upToV2(raw);
 		if (snapshot.version !== latestVersion) continue;
 
 		if (outputFormat() === 'text') console.log(`[${chalk.green('✓')}] ${path}`);
