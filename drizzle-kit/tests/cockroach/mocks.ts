@@ -615,7 +615,7 @@ const toTestDatabase = (client: PoolClient, clear: () => Promise<void>): TestDat
 });
 
 // Several connection strings may be given, separated by ';'. VITEST_POOL_ID spreads the workers across them.
-const resolveUrl = (envUrl: string): string => {
+export const resolveUrl = (envUrl: string): string => {
 	const urls = envUrl.split(';').filter(Boolean);
 	if (urls.length > 1) {
 		const poolId = parseInt(process.env.VITEST_POOL_ID || '1', 10);

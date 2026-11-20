@@ -28,6 +28,9 @@ import {
 	stringFromDatabaseIdentityProperty as parseIdentityProperty,
 } from './grammar';
 
+// A row of information_schema.statistics for a column CockroachDB adds to an index key implicitly.
+type ImplicitKeyColumn = { table_schema: string; table_name: string; index_name: string; column_name: string };
+
 // TODO: tables/schema/entities -> filter: (entity: {type: ..., metadata....})=>boolean;
 // TODO: since we by default only introspect public
 export const fromDatabase = async (
@@ -562,9 +565,9 @@ export const fromDatabase = async (
 	// information_schema.statistics, which SHOW INDEXES reads, marks those columns implicit. It also marks the primary
 	// key columns a secondary index stores after its own, but those aren't in conkey or indkey.
 	const implicitKeyColumnsQuery = filteredTables.length === 0
-		? Promise.resolve<{ table_schema: string; table_name: string; index_name: string; column_name: string }[]>([])
+		? Promise.resolve<ImplicitKeyColumn[]>([])
 		: db
-			.query<{ table_schema: string; table_name: string; index_name: string; column_name: string }>(
+			.query<ImplicitKeyColumn>(
 				`SELECT
 			table_schema,
 			table_name,
