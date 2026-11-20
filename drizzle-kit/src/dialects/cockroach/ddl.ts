@@ -7,7 +7,17 @@ import { defaults } from './grammar';
 export const createDDL = () =>
 	create({
 		schemas: { name: 'string' },
-		tables: { schema: 'string', name: 'string', isRlsEnabled: 'boolean' },
+		tables: {
+			schema: 'string',
+			name: 'string',
+			isRlsEnabled: 'boolean',
+			// null is CockroachDB's default, REGIONAL BY TABLE IN PRIMARY REGION.
+			locality: {
+				type: ['global', 'regionalByTable', 'regionalByRow'],
+				region: 'string?',
+				as: 'string?',
+			},
+		},
 		enums: {
 			schema: 'string',
 			name: 'string',
@@ -176,6 +186,7 @@ export type ForeignKey = CockroachEntities['fks'];
 export type PrimaryKey = CockroachEntities['pks'];
 export type CheckConstraint = CockroachEntities['checks'];
 export type Policy = CockroachEntities['policies'];
+export type Locality = CockroachEntities['tables']['locality'];
 export type View = CockroachEntities['views'];
 export type ViewColumn = {
 	schema: string;
@@ -197,6 +208,7 @@ export type Table = {
 	checks: CheckConstraint[];
 	policies: Policy[];
 	isRlsEnabled: boolean;
+	locality: Locality;
 };
 
 export type InterimColumn = Omit<Column, 'primaryKey'> & {

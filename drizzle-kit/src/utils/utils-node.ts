@@ -9,6 +9,7 @@ import {
 	UnsupportedSnapshotVersionCliError,
 } from '../cli/errors';
 import { snapshotValidator as cockroachValidator } from '../dialects/cockroach/snapshot';
+import { latestVersion as cockroachLatestVersion, upToV2 as cockroachUpToV2 } from '../dialects/cockroach/versions';
 import { snapshotValidator as mssqlValidatorSnapshot } from '../dialects/mssql/snapshot';
 import { snapshotValidator as mysqlSnapshotValidator } from '../dialects/mysql/snapshot';
 import { snapshotValidator as pgSnapshotValidator } from '../dialects/postgres/snapshot';
@@ -176,11 +177,12 @@ const postgresValidator = (snapshot: object): ValidationResult => {
 	return { status: 'valid' };
 };
 
+// Kit upgrades version-1 snapshots as it reads them (see `upToV2`), so they are valid, not `nonLatest`.
 const cockroachSnapshotValidator = (snapshot: object): ValidationResult => {
-	const versionError = assertVersion(snapshot, 1);
-	if (versionError) return { status: versionError };
+	const versionError = assertVersion(snapshot, Number(cockroachLatestVersion));
+	if (versionError === 'unsupported') return { status: versionError };
 
-	const res = cockroachValidator.parse(snapshot);
+	const res = cockroachValidator.parse(cockroachUpToV2(snapshot));
 	if (!res.success) {
 		return { status: 'malformed', errors: res.errors ?? [] };
 	}

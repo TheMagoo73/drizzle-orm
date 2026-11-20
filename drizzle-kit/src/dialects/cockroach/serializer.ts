@@ -6,6 +6,7 @@ import { createDDL, interimToDDL } from './ddl';
 import { fromDrizzleSchema, prepareFromSchemaFiles } from './drizzle';
 import type { CockroachSnapshot } from './snapshot';
 import { drySnapshot, snapshotValidator } from './snapshot';
+import { upToV2 } from './versions';
 
 export const prepareSnapshot = async (
 	snapshots: string[],
@@ -23,7 +24,7 @@ export const prepareSnapshot = async (
 	const prevSnapshot = snapshots.length === 0
 		? drySnapshot
 		: snapshotValidator.strict(
-			JSON.parse(readFileSync(snapshots[snapshots.length - 1]).toString()),
+			upToV2(JSON.parse(readFileSync(snapshots[snapshots.length - 1]).toString())),
 		);
 
 	const ddlPrev = createDDL();
@@ -59,7 +60,7 @@ export const prepareSnapshot = async (
 	const prevIds = snapshots.length === 0 ? [prevSnapshot.id] : findLeafSnapshotIds(snapshots);
 
 	const snapshot = {
-		version: '1',
+		version: '2',
 		dialect: 'cockroach',
 		id,
 		prevIds,

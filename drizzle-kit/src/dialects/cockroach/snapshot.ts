@@ -210,12 +210,12 @@ export type Index = TypeOf<typeof index>;
 export type Column = TypeOf<typeof column>;
 
 export const toJsonSnapshot = (ddl: CockroachDDL, prevIds: string[], renames: string[]): CockroachSnapshot => {
-	return { dialect: 'cockroach', id: randomUUID(), prevIds, version: '1', ddl: ddl.entities.list(), renames };
+	return { dialect: 'cockroach', id: randomUUID(), prevIds, version: '2', ddl: ddl.entities.list(), renames };
 };
 
 const ddl = createDDL();
 export const snapshotValidator = validator({
-	version: ['1'],
+	version: ['2'],
 	dialect: ['cockroach'],
 	id: 'string',
 	prevIds: array<string>((_) => true),
@@ -233,7 +233,7 @@ export type CockroachSnapshot = typeof snapshotValidator.shape;
 
 export const drySnapshot = snapshotValidator.strict(
 	{
-		version: '1',
+		version: '2',
 		dialect: 'cockroach',
 		id: originUUID,
 		prevIds: [],
