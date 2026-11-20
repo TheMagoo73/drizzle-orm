@@ -1,0 +1,43 @@
+# Fork-only: every push to jcmagoo-release publishes @jcmagoo/drizzle-orm and @jcmagoo/drizzle-kit under the
+# `locality` dist-tag, versioned <upstream version>.locality.<run number>. See scripts/jcmagoo-publish.mjs.
+# Needs the NPM_TOKEN repository secret: an npm granular token with read/write on the @jcmagoo scope.
+# Update the published build by merging cockroach-locality into jcmagoo-release and pushing.
+name: Publish @jcmagoo packages
+
+on:
+  push:
+    branches: [jcmagoo-release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jcmagoo-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'TheMagoo73/drizzle-orm'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.4 }
+      - uses: ./.github/actions/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Build drizzle-orm and drizzle-kit
+        run: pnpm turbo run build --filter drizzle-orm --filter drizzle-kit --color --log-order=stream
+      - name: Publish
+        run: node scripts/jcmagoo-publish.mjs --suffix "locality.${GITHUB_RUN_NUMBER}" --tag locality
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
