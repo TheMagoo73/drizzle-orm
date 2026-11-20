@@ -781,7 +781,17 @@ const convertors = [
 	alterColumnDropNotNullConvertor,
 ];
 
-export function fromJson(statements: JsonStatement[]) {
+// A move to or from REGIONAL BY ROW rewrites the table's primary index, so a generated migration says so above it.
+// Push warns about the same change instead (see push-cockroach).
+const commentFor = (statement: JsonStatement): string | null => {
+	if (statement.type !== 'alter_locality') return null;
+	if (statement.from?.type !== 'regionalByRow' && statement.to?.type !== 'regionalByRow') return null;
+	const key = statement.schema !== 'public' ? `"${statement.schema}"."${statement.name}"` : `"${statement.name}"`;
+	return `-- ${key} moves to or from REGIONAL BY ROW: CockroachDB rewrites the table's primary index in a schema change job.
+`;
+};
+
+export function fromJson(statements: JsonStatement[], mode: 'default' | 'push' = 'default') {
 	const grouped = statements
 		.map((statement) => {
 			const filtered = convertors.filter((it) => {
@@ -793,6 +803,8 @@ export function fromJson(statements: JsonStatement[]) {
 
 			const sqlStatements = convertor.convert(statement as any);
 			const statements = typeof sqlStatements === 'string' ? [sqlStatements] : sqlStatements;
+			const comment = mode === 'default' ? commentFor(statement) : null;
+			if (comment) statements[0] = comment + statements[0];
 			return { jsonStatement: statement, sqlStatements: statements };
 		})
 		.filter((it) => it !== null);

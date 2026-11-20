@@ -182,6 +182,15 @@ export const ddlDiff = async (
 			set: { name: rename.to.name, schema: rename.to.schema },
 			where: { name: rename.from.name, schema: rename.from.schema, table: rename.from.table },
 		});
+
+		// A REGIONAL BY ROW table's `AS` column follows a rename, as it does in CockroachDB.
+		const table = ddl1.tables.one({ schema: rename.from.schema, name: rename.from.table });
+		if (table?.locality?.as === rename.from.name) {
+			ddl1.tables.update({
+				set: { locality: { ...table.locality, as: rename.to.name } },
+				where: { schema: table.schema, name: table.name },
+			});
+		}
 	}
 
 	preserveEntityNames(ddl1.fks, ddl2.fks, mode);
@@ -986,7 +995,7 @@ export const ddlDiff = async (
 	jsonStatements.push(...dropSequences);
 	jsonStatements.push(...dropSchemas);
 
-	const { groupedStatements, sqlStatements } = fromJson(jsonStatements);
+	const { groupedStatements, sqlStatements } = fromJson(jsonStatements, mode);
 
 	const renames = prepareMigrationRenames([
 		...renameSchemas,

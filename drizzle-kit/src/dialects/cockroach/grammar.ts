@@ -172,6 +172,10 @@ export const defaultToSQL = (it: Pick<Column, 'default' | 'dimensions' | 'type' 
 		return `${value}::${schemaPrefix}"${columnType}"${dimensions > 0 ? '[]' : ''}`;
 	}
 
+	// Kit keeps defaults without their cast, but CockroachDB types `gateway_region()` as a string, so a region
+	// column's default needs the cast back: `DEFAULT gateway_region()::crdb_internal_region`.
+	if (CrdbRegion.is(columnType) && dimensions === 0) return `${value}::${columnType}`;
+
 	//   const { type: rawType } = splitSqlType(columnType);
 	const suffix = dimensions > 0 ? `::${columnType}[]` : '';
 
@@ -1368,7 +1372,11 @@ export const CrdbRegion: SqlType = {
 	defaultArrayFromDrizzle: Char.defaultArrayFromDrizzle,
 	defaultFromIntrospect: Char.defaultFromIntrospect,
 	defaultArrayFromIntrospect: Char.defaultArrayFromIntrospect,
-	toTs: Char.toTs,
+	// A region literal is a string, but a region default is usually an expression such as `gateway_region()`.
+	toTs: (type, value) => {
+		if (!value || /^e?'/.test(value)) return Char.toTs(type, value);
+		return { default: `sql\`${escapeForSqlTemplate(value)}\`` };
+	},
 	toArrayTs: Char.toArrayTs,
 };
 

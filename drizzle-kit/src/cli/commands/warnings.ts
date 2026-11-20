@@ -60,3 +60,7 @@ export const dropReferencedPrimaryKeyWarning = (table: string, columns: string[]
 	const columnNames = columns.join(', ');
 	return `You are trying to drop primary key from ${table} (${columnNames}), but there is an existing reference on this column. You must either add a UNIQUE constraint to (${columnNames}) or drop the foreign key constraint that references this column.`;
 };
+
+export const regionalByRowRewriteWarning = (table: string) => {
+	return `${table} moves to or from REGIONAL BY ROW, so CockroachDB rewrites its primary index in a schema change job. The table takes a schema change lock until it finishes.`;
+};

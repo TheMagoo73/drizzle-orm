@@ -41,7 +41,7 @@ import '../../src/@types/utils';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { Pool, PoolClient } from 'pg';
 import { introspect } from 'src/cli/commands/pull-cockroach';
-import { suggestions } from 'src/cli/commands/push-cockroach';
+import { localityWarnings, suggestions } from 'src/cli/commands/push-cockroach';
 import { runWithCliContext } from 'src/cli/context';
 import { HintsHandler } from 'src/cli/hints';
 import { EmptyProgressView, explain } from 'src/cli/views';
@@ -255,7 +255,7 @@ export const push = async (
 	if (config.explain) {
 		const explainMessage = explain('cockroach', groupedStatements, []);
 		console.log(explainMessage);
-		return { sqlStatements, statements, hints };
+		return { sqlStatements, statements, hints, warnings: localityWarnings(statements) };
 	}
 
 	for (const sql of sqlStatements) {
@@ -300,7 +300,7 @@ export const push = async (
 		}
 	}
 
-	return { sqlStatements, statements, hints };
+	return { sqlStatements, statements, hints, warnings: localityWarnings(statements) };
 };
 
 // init schema to db -> pull from db to file -> ddl from files -> compare ddl from db with ddl from file

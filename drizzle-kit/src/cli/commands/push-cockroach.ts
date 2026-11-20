@@ -43,6 +43,7 @@ import {
 	dropSchemaWarning,
 	dropTableWarning,
 	dropViewWarning,
+	regionalByRowRewriteWarning,
 	tableNamesBeforeRenames,
 } from './warnings';
 
@@ -137,6 +138,13 @@ export const handle = async (
 	if (hints.hasMissingHints()) {
 		return hints.toResponse();
 	}
+
+	// Shown, not asked: a move to or from REGIONAL BY ROW loses no data.
+	const rewriteWarnings = localityWarnings(jsonStatements);
+	if (rewriteWarnings.length > 0) {
+		humanLog(rewriteWarnings.map((it) => `[${chalk.yellow('!')}] ${it}`).join('\n'));
+	}
+
 	if (explain) {
 		if (json) {
 			return explainJsonOutput('cockroach', jsonStatements, suggestionHints);
@@ -173,6 +181,14 @@ const quote = (name: string) => `"${name}"`;
 
 const quoteTable = ({ schema, name }: { schema?: string; name: string }) => {
 	return schema && schema !== 'public' ? `${quote(schema)}.${quote(name)}` : quote(name);
+};
+
+// Warnings that don't block push: changes that lose no data but can take a while on a large table.
+export const localityWarnings = (jsonStatements: JsonStatement[]): string[] => {
+	return jsonStatements
+		.filter((it) => it.type === 'alter_locality')
+		.filter((it) => it.from?.type === 'regionalByRow' || it.to?.type === 'regionalByRow')
+		.map((it) => regionalByRowRewriteWarning(quoteTable(it)));
 };
 
 export const suggestions = async (db: DB, jsonStatements: JsonStatement[], hints: HintsHandler) => {
