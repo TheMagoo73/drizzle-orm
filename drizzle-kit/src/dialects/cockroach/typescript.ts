@@ -45,6 +45,7 @@ const imports = [
 	'string',
 	'text',
 	'varbit',
+	'crdbRegion',
 	'customType',
 ] as const;
 export type Import = (typeof imports)[number];

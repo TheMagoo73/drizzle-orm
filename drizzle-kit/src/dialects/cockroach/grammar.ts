@@ -1360,6 +1360,18 @@ export const StringType: SqlType = {
 	toArrayTs: Char.toArrayTs,
 };
 
+// CockroachDB's region type, `crdbRegion()`. CockroachDB owns the enum behind it, so it's not an enum here.
+export const CrdbRegion: SqlType = {
+	is: (type: string) => /^\s*crdb_internal_region\s*$/i.test(type),
+	drizzleImport: () => 'crdbRegion',
+	defaultFromDrizzle: Char.defaultFromDrizzle,
+	defaultArrayFromDrizzle: Char.defaultArrayFromDrizzle,
+	defaultFromIntrospect: Char.defaultFromIntrospect,
+	defaultArrayFromIntrospect: Char.defaultArrayFromIntrospect,
+	toTs: Char.toTs,
+	toArrayTs: Char.toArrayTs,
+};
+
 export const Jsonb: SqlType = {
 	is: (type: string) => /^\s*jsonb\s*$/i.test(type),
 	drizzleImport: () => 'jsonb',
@@ -1817,6 +1829,7 @@ export const typeFor = (type: string, isEnum: boolean): SqlType => {
 	if (Varchar.is(type)) return Varchar;
 	// if (Text.is(type)) return Text;
 	if (StringType.is(type)) return StringType;
+	if (CrdbRegion.is(type)) return CrdbRegion;
 	if (Jsonb.is(type)) return Jsonb;
 	if (Interval.is(type)) return Interval;
 	if (Vector.is(type)) return Vector;

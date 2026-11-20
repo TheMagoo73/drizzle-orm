@@ -915,6 +915,8 @@ export const fromDatabase = async (
 		const columnDimensions = Number(column.dimensions);
 
 		columnTypeMapped = trimChar(columnTypeMapped, '"');
+		// The enums query leaves out CockroachDB's region enum, so its columns come back as the qualified type name.
+		if (columnTypeMapped === 'public.crdb_internal_region') columnTypeMapped = 'crdb_internal_region';
 
 		const columnDefault = defaultsByPosition.get(columnPosition(column.tableId, column.ordinality));
 
@@ -1257,6 +1259,7 @@ export const fromDatabase = async (
 
 		let columnTypeMapped = enumType ? enumType.name : it.type.replace('[]', '');
 		columnTypeMapped = trimChar(columnTypeMapped, '"');
+		if (columnTypeMapped === 'public.crdb_internal_region') columnTypeMapped = 'crdb_internal_region';
 		for (let i = 0; i < Number(it.dimensions); i++) {
 			columnTypeMapped += '[]';
 		}
