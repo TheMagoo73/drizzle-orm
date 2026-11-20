@@ -151,9 +151,14 @@ export type CockroachBuildExtraConfigColumns<
 	out TConfigMap extends Record<string, AnyCockroachColumnBuilder>,
 > =
 	& {
-		[Key in keyof TConfigMap]: ExtraConfigColumn;
+		[Key in keyof TConfigMap]: TConfigMap[Key]['_'] extends { crdbRegion: true; dimensions?: undefined }
+			? CrdbRegionExtraConfigColumn
+			: ExtraConfigColumn;
 	}
 	& {};
+
+/** An extra config column built from `crdbRegion()` (not an array), the only kind `locality.regionalByRow({ as })` accepts */
+export type CrdbRegionExtraConfigColumn = ExtraConfigColumn & { readonly _: { crdbRegion: true } };
 
 export type CockroachColumns = Record<string, CockroachColumn<any>>;
 

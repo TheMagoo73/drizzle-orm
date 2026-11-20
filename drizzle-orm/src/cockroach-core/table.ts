@@ -19,6 +19,7 @@ import type {
 } from './columns/common.ts';
 import type { ForeignKey, ForeignKeyBuilder } from './foreign-keys.ts';
 import type { AnyIndexBuilder } from './indexes.ts';
+import type { CockroachLocality } from './locality.ts';
 import type { CockroachPolicy } from './policies.ts';
 import type { PrimaryKeyBuilder } from './primary-keys.ts';
 import type { UniqueConstraintBuilder } from './unique-constraint.ts';
@@ -29,7 +30,8 @@ export type CockroachTableExtraConfigValue =
 	| ForeignKeyBuilder
 	| PrimaryKeyBuilder
 	| UniqueConstraintBuilder
-	| CockroachPolicy;
+	| CockroachPolicy
+	| CockroachLocality;
 
 export type CockroachTableExtraConfig = Record<
 	string,

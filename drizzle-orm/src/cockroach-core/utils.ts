@@ -1,5 +1,6 @@
 import { CockroachTable } from '~/cockroach-core/table.ts';
 import { is } from '~/entity.ts';
+import { DrizzleError } from '~/errors.ts';
 import type { AnyRelations } from '~/relations.ts';
 import { Table } from '~/table.ts';
 import { throwUnknownExtraConfigValue } from '~/table.utils.ts';
@@ -12,6 +13,7 @@ import type { AnyCockroachColumn } from './columns/index.ts';
 import { type ForeignKey, ForeignKeyBuilder } from './foreign-keys.ts';
 import type { Index } from './indexes.ts';
 import { IndexBuilder } from './indexes.ts';
+import { CockroachLocality } from './locality.ts';
 import { CockroachPolicy } from './policies.ts';
 import { type PrimaryKey, PrimaryKeyBuilder } from './primary-keys.ts';
 import { type UniqueConstraint, UniqueConstraintBuilder } from './unique-constraint.ts';
@@ -28,6 +30,7 @@ export function getTableConfig<TTable extends CockroachTable>(table: TTable) {
 	const schema = table[Table.Symbol.Schema];
 	const policies: CockroachPolicy[] = [];
 	const enableRLS: boolean = table[CockroachTable.Symbol.EnableRLS];
+	let locality: CockroachLocality | undefined;
 
 	const extraConfigBuilder = table[CockroachTable.Symbol.ExtraConfigBuilder];
 
@@ -47,6 +50,11 @@ export function getTableConfig<TTable extends CockroachTable>(table: TTable) {
 				foreignKeys.push(builder.build(table));
 			} else if (is(builder, CockroachPolicy)) {
 				policies.push(builder);
+			} else if (is(builder, CockroachLocality)) {
+				if (locality !== undefined) {
+					throw new DrizzleError({ message: `Table "${name}" declares more than one locality` });
+				}
+				locality = builder;
 			} else {
 				throwUnknownExtraConfigValue(name, builder);
 			}
@@ -64,6 +72,7 @@ export function getTableConfig<TTable extends CockroachTable>(table: TTable) {
 		schema,
 		policies,
 		enableRLS,
+		locality,
 	};
 }
 

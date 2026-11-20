@@ -2,6 +2,7 @@ import { bigint, int8 } from './bigint.ts';
 import { bit } from './bit.ts';
 import { bool } from './bool.ts';
 import { char } from './char.ts';
+import { crdbRegion } from './crdb-region.ts';
 import { customType } from './custom.ts';
 import { date } from './date.ts';
 import { decimal, numeric } from './decimal.ts';
@@ -26,6 +27,7 @@ export function getCockroachColumnBuilders() {
 		bigint,
 		bool,
 		char,
+		crdbRegion,
 		customType,
 		date,
 		doublePrecision,

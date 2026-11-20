@@ -3,6 +3,7 @@ export * from './bit.ts';
 export * from './bool.ts';
 export * from './char.ts';
 export * from './common.ts';
+export * from './crdb-region.ts';
 export * from './custom.ts';
 export * from './date.ts';
 export * from './decimal.ts';

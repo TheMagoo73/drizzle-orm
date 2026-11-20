@@ -8,6 +8,7 @@ export * from './db.ts';
 export * from './dialect.ts';
 export * from './foreign-keys.ts';
 export * from './indexes.ts';
+export * from './locality.ts';
 export * from './policies.ts';
 export * from './primary-keys.ts';
 export * from './query-builders/index.ts';
