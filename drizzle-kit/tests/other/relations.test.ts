@@ -1,3 +1,4 @@
+import ts from 'typescript';
 import { expect, test } from 'vitest';
 import { relationsToTypeScript } from '../../src/cli/commands/pull-common';
 import type { SchemaForPull } from '../../src/cli/commands/pull-common';
@@ -254,4 +255,16 @@ test('table with self referencing FK and FK to another table produces direct rel
 			columnsTo: ['organizationId'],
 		},
 	]);
+});
+
+// The generated file is TypeScript source, so the schema path must survive being read back as a string literal.
+test('schema import keeps a Windows absolute path intact', () => {
+	const { file } = relationsToTypeScript([], 'camel', 'C:\\projects\\app\\tests\\tmp\\schema');
+
+	const source = ts.createSourceFile('relations.ts', file, ts.ScriptTarget.Latest);
+	const specifiers = source.statements
+		.filter(ts.isImportDeclaration)
+		.map((it) => (it.moduleSpecifier as ts.StringLiteral).text);
+
+	expect(specifiers).toStrictEqual(['drizzle-orm', 'C:/projects/app/tests/tmp/schema']);
 });
