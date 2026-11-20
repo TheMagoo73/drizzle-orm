@@ -38,6 +38,12 @@ jobs:
       - name: Build drizzle-orm and drizzle-kit
         run: pnpm turbo run build --filter drizzle-orm --filter drizzle-kit --color --log-order=stream
       - name: Publish
-        run: node scripts/jcmagoo-publish.mjs --suffix "locality.${GITHUB_RUN_NUMBER}" --tag locality
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            node scripts/jcmagoo-publish.mjs --suffix "locality.${GITHUB_RUN_NUMBER}" --tag locality --dry-run
+            echo "::error::The NPM_TOKEN repository secret is not set, so this was a dry run. Add it and re-run."
+            exit 1
+          fi
+          node scripts/jcmagoo-publish.mjs --suffix "locality.${GITHUB_RUN_NUMBER}" --tag locality
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
