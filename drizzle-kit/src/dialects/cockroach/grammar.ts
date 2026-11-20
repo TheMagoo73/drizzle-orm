@@ -1846,6 +1846,11 @@ export const typeFor = (type: string, isEnum: boolean): SqlType => {
 	return Custom;
 };
 
+// A table's name as SQL: "name", or "schema"."name" outside public.
+export const quotedTableName = ({ schema, name }: { schema?: string; name: string }): string => {
+	return schema && schema !== 'public' ? `"${schema}"."${name}"` : `"${name}"`;
+};
+
 // The `LOCALITY` clause text, as CockroachDB writes it in `SHOW TABLES`. null is the default locality.
 export const localityToSQL = (locality: Locality): string => {
 	if (!locality) return 'REGIONAL BY TABLE IN PRIMARY REGION';
@@ -1859,8 +1864,9 @@ export const localityToSQL = (locality: Locality): string => {
 	}
 };
 
-// Parses the locality text of SHOW TABLES back into the tables entity's `locality`.
-export const parseLocality = (text: string | null): Locality => {
+// Parses the locality text of SHOW TABLES back into the tables entity's `locality`. Unknown text fails the pull:
+// reading it as the default would make the next push reset the table's locality.
+export const parseLocality = (text: string | null, table: { schema: string; name: string }): Locality => {
 	if (!text || text === 'REGIONAL BY TABLE IN PRIMARY REGION') return null;
 	if (text === 'GLOBAL') return { type: 'global', region: null, as: null };
 
@@ -1873,5 +1879,8 @@ export const parseLocality = (text: string | null): Locality => {
 	const byRowAs = /^REGIONAL BY ROW AS (.+)$/.exec(text);
 	if (byRowAs) return { type: 'regionalByRow', region: null, as: unquote(byRowAs[1]!) };
 
-	throw new Error(`Unknown CockroachDB table locality: ${text}`);
+	const tableName = quotedTableName(table);
+	throw new Error(
+		`Can't read the locality of table ${tableName}: CockroachDB reports "${text}", which drizzle-kit doesn't recognise. Please report it at https://github.com/drizzle-team/drizzle-orm/issues.`,
+	);
 };

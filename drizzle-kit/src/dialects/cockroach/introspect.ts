@@ -31,6 +31,10 @@ import {
 // A row of information_schema.statistics for a column CockroachDB adds to an index key implicitly.
 type ImplicitKeyColumn = { table_schema: string; table_name: string; index_name: string; column_name: string };
 
+// The enums query leaves out CockroachDB's region enum, so table and view columns of that type come back with the
+// qualified type name.
+const regionTypeUnqualified = (type: string) => type === 'public.crdb_internal_region' ? 'crdb_internal_region' : type;
+
 // TODO: tables/schema/entities -> filter: (entity: {type: ..., metadata....})=>boolean;
 // TODO: since we by default only introspect public
 export const fromDatabase = async (
@@ -199,16 +203,6 @@ export const fromDatabase = async (
 
 	const filterByTableIds = filteredTableIds.length > 0 ? `(${filteredTableIds.join(',')})` : '';
 	const filterByTableAndViewIds = filteredViewsAndTableIds.length > 0 ? `(${filteredViewsAndTableIds.join(',')})` : '';
-
-	for (const table of filteredTables) {
-		tables.push({
-			entityType: 'tables',
-			schema: table.schema,
-			name: table.name,
-			isRlsEnabled: table.rlsEnabled,
-			locality: null,
-		});
-	}
 
 	// SHOW TABLES, not crdb_internal.tables, which v26.4 restricts. locality is NULL in a database that isn't
 	// multi-region, and the default text in one that is; both parse to null.
@@ -636,9 +630,16 @@ export const fromDatabase = async (
 		localitiesQuery,
 	]);
 
-	for (const it of localitiesList) {
-		const table = tables.find((t) => t.schema === it.schema && t.name === it.name);
-		if (table) table.locality = parseLocality(it.locality);
+	const localityByTable = mapBy(localitiesList, (it) => JSON.stringify([it.schema, it.name]));
+	for (const table of filteredTables) {
+		const localityText = localityByTable.get(JSON.stringify([table.schema, table.name]))?.locality ?? null;
+		tables.push({
+			entityType: 'tables',
+			schema: table.schema,
+			name: table.name,
+			isRlsEnabled: table.rlsEnabled,
+			locality: parseLocality(localityText, table),
+		});
 	}
 
 	const compareLower = (a: string, b: string) => {
@@ -917,9 +918,7 @@ export const fromDatabase = async (
 			).replaceAll('[]', '');
 		const columnDimensions = Number(column.dimensions);
 
-		columnTypeMapped = trimChar(columnTypeMapped, '"');
-		// The enums query leaves out CockroachDB's region enum, so its columns come back as the qualified type name.
-		if (columnTypeMapped === 'public.crdb_internal_region') columnTypeMapped = 'crdb_internal_region';
+		columnTypeMapped = regionTypeUnqualified(trimChar(columnTypeMapped, '"'));
 
 		const columnDefault = defaultsByPosition.get(columnPosition(column.tableId, column.ordinality));
 
@@ -1261,8 +1260,7 @@ export const fromDatabase = async (
 			: null;
 
 		let columnTypeMapped = enumType ? enumType.name : it.type.replace('[]', '');
-		columnTypeMapped = trimChar(columnTypeMapped, '"');
-		if (columnTypeMapped === 'public.crdb_internal_region') columnTypeMapped = 'crdb_internal_region';
+		columnTypeMapped = regionTypeUnqualified(trimChar(columnTypeMapped, '"'));
 		for (let i = 0; i < Number(it.dimensions); i++) {
 			columnTypeMapped += '[]';
 		}

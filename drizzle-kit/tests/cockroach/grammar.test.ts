@@ -1,4 +1,4 @@
-import { splitSqlType, trimDefaultValueSuffix } from 'src/dialects/cockroach/grammar';
+import { parseLocality, splitSqlType, trimDefaultValueSuffix } from 'src/dialects/cockroach/grammar';
 import { expect, test } from 'vitest';
 
 test.each([
@@ -73,4 +73,11 @@ test('split sql type', () => {
 	expect.soft(splitSqlType('numeric(10)[][]')).toStrictEqual({ type: 'numeric', options: '10' });
 	expect.soft(splitSqlType('numeric(10,0)[][]')).toStrictEqual({ type: 'numeric', options: '10,0' });
 	expect.soft(splitSqlType('numeric(10,2)[][]')).toStrictEqual({ type: 'numeric', options: '10,2' });
+});
+
+// Reading unknown text as the default locality would make the next push reset the table, so pull stops instead.
+test('parseLocality names the table and the text it does not recognise', () => {
+	expect(() => parseLocality('REGIONAL BY SOMETHING NEW', { schema: 'shop', name: 'orders' })).toThrowError(
+		`Can't read the locality of table "shop"."orders": CockroachDB reports "REGIONAL BY SOMETHING NEW", which drizzle-kit doesn't recognise. Please report it at https://github.com/drizzle-team/drizzle-orm/issues.`,
+	);
 });
