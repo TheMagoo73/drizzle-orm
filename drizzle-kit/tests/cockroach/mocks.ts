@@ -1,4 +1,4 @@
-import { composeHint, requireEnv } from '@drizzle/test-utils';
+import { composeHint, optionalEnv, requireEnv } from '@drizzle/test-utils';
 import { is } from 'drizzle-orm';
 import {
 	AnyCockroachColumn,
@@ -589,43 +589,124 @@ const prepareClient = async (url: string, n: string, tx: boolean) => {
 		}
 	};
 
-	const db: TestDatabase = {
-		query: async (sql, params) => {
-			return client
-				.query(sql, params)
-				.then((it) => it.rows as any[])
-				.catch((e: Error) => {
-					const error = new Error(`query error: ${sql}\n\n${e.message}`);
-					throw error;
-				});
-		},
-		batch: async (sqls) => {
-			for (const sql of sqls) {
-				await client.query(sql);
-			}
-		},
-		clear: clear,
-		close: async () => {
+	return toTestDatabase(client, clear);
+};
+
+const toTestDatabase = (client: PoolClient, clear: () => Promise<void>): TestDatabase => ({
+	query: async (sql, params) => {
+		return client
+			.query(sql, params)
+			.then((it) => it.rows as any[])
+			.catch((e: Error) => {
+				const error = new Error(`query error: ${sql}\n\n${e.message}`);
+				throw error;
+			});
+	},
+	batch: async (sqls) => {
+		for (const sql of sqls) {
+			await client.query(sql);
+		}
+	},
+	clear: clear,
+	close: async () => {
+		client.release();
+	},
+	client,
+});
+
+// Several connection strings may be given, separated by ';'. VITEST_POOL_ID spreads the workers across them.
+const resolveUrl = (envUrl: string): string => {
+	const urls = envUrl.split(';').filter(Boolean);
+	if (urls.length > 1) {
+		const poolId = parseInt(process.env.VITEST_POOL_ID || '1', 10);
+		return urls[poolId % urls.length]!;
+	}
+	return urls[0]!;
+};
+
+const cockroachUrl = () => resolveUrl(requireEnv('COCKROACH_CONNECTION_STRING', composeHint('cockroach')));
+
+const firstClusterRegion = async (client: PoolClient): Promise<string | undefined> => {
+	const { rows } = await client.query<{ region: string }>(
+		'SELECT region FROM [SHOW REGIONS FROM CLUSTER] ORDER BY region;',
+	);
+	return rows[0]?.region;
+};
+
+// Whether the cluster has regions to host a multi-region database: the compose Cockroach starts with
+// --locality=region=us-east1. Suites using the mrdb fixture skip when it has none, or (outside CI) when no cluster is
+// configured. A configured cluster that can't be reached fails the file, as the pooled fixtures do.
+export const clusterHasRegions = async (): Promise<boolean> => {
+	const envUrl = optionalEnv('COCKROACH_CONNECTION_STRING', composeHint('cockroach'));
+	if (!envUrl) return false;
+	const pool = new Pool({ connectionString: resolveUrl(envUrl), max: 1 });
+	try {
+		const client = await pool.connect();
+		try {
+			return (await firstClusterRegion(client)) !== undefined;
+		} finally {
 			client.release();
-		},
-		client,
+		}
+	} finally {
+		await pool.end();
+	}
+};
+
+export type MultiRegionTestDatabase = TestDatabase & { name: string; primaryRegion: string };
+
+// A database of its own for one test, with its PRIMARY REGION set to the cluster's first region. drop() closes the
+// connection, which a failed test may still be using, and drops the database from a new one. If the setup fails,
+// it does the same before rethrowing, so no pool or half-made database is left behind.
+const prepareMultiRegionDatabase = async (url: string) => {
+	// Lower case: Cockroach folds the unquoted name, and SHOW DATABASES lists it that way.
+	const name = `mrdb${hash(String(Math.random()), 10)}`.toLowerCase();
+	const pool = new Pool({ connectionString: url, max: 1 });
+	let client: PoolClient | undefined;
+
+	const drop = async () => {
+		try {
+			client?.release(true);
+			await pool.end();
+		} catch {
+			// The connection is already gone; the database still has to be dropped.
+		}
+		const admin = new Pool({ connectionString: url, max: 1 });
+		try {
+			await admin.query(`DROP DATABASE IF EXISTS ${name} CASCADE;`);
+		} finally {
+			await admin.end();
+		}
 	};
-	return db;
+
+	try {
+		const conn = await pool.connect();
+		client = conn;
+
+		const primaryRegion = await firstClusterRegion(conn);
+		if (!primaryRegion) throw new Error('The Cockroach cluster has no regions for a multi-region database');
+
+		const create = async () => {
+			await conn.query(`CREATE DATABASE ${name} PRIMARY REGION "${primaryRegion}";`);
+			await conn.query(`USE ${name};`);
+		};
+		await create();
+
+		const clear = async () => {
+			await conn.query('USE defaultdb;');
+			await conn.query(`DROP DATABASE IF EXISTS ${name} CASCADE;`);
+			await create();
+		};
+
+		const db: MultiRegionTestDatabase = { ...toTestDatabase(conn, clear), name, primaryRegion };
+		return { db, drop };
+	} catch (error) {
+		await drop().catch(() => {});
+		throw error;
+	}
 };
 
 export const prepareTestDatabase = async (): Promise<TestDatabaseKit> => {
-	const envUrl = requireEnv('COCKROACH_CONNECTION_STRING', composeHint('cockroach'));
-
-	let url: string;
-	// Support multiple connection strings separated by ';'
-	const urls = envUrl.split(';').filter(Boolean);
-	if (urls.length > 1) {
-		// Use VITEST_POOL_ID to distribute workers across containers
-		const poolId = parseInt(process.env.VITEST_POOL_ID || '1', 10);
-		url = urls[poolId % urls.length]!;
-	} else {
-		url = urls[0]!;
-	}
+	const url = cockroachUrl();
 
 	const clients = [
 		await prepareClient(url, 'db0', false),
@@ -698,7 +779,31 @@ export const prepareTestDatabase = async (): Promise<TestDatabaseKit> => {
 	};
 };
 
-export const test = base.extend<{ kit: TestDatabaseKit; db: TestDatabase; dbc: TestDatabase }>({
+// Returns a pooled connection after a test. A failed test leaves it in an unknown state, or still in use, so it is
+// retired. So is one that clear() fails on (a leftover role that some object depends on, say): released, it would
+// fail the next test the same way, and dropped, it would starve the pool and hang every later test in acquire().
+const giveBack = async (
+	db: TestDatabase,
+	task: { result?: { state?: string; errors?: unknown[] } },
+	release: () => void,
+	retire: () => Promise<void>,
+) => {
+	if (task.result?.state === 'fail' || task.result?.errors?.length) return retire();
+	try {
+		await db.clear();
+	} catch (error) {
+		await retire();
+		throw error;
+	}
+	release();
+};
+
+export const test = base.extend<{
+	kit: TestDatabaseKit;
+	db: TestDatabase;
+	dbc: TestDatabase;
+	mrdb: MultiRegionTestDatabase;
+}>({
 	kit: [
 		async ({}, use) => { // oxlint-disable-line no-empty-pattern
 			const kit = await prepareTestDatabase();
@@ -715,10 +820,7 @@ export const test = base.extend<{ kit: TestDatabaseKit; db: TestDatabase; dbc: T
 		async ({ kit, task }, use) => {
 			const { db, release, retire } = await kit.acquire();
 			await use(db);
-			// A failed test leaves the connection to the next one in an unknown state, or still in use.
-			if (task.result?.state === 'fail' || task.result?.errors?.length) return retire();
-			await db.clear();
-			release();
+			await giveBack(db, task, release, retire);
 		},
 		{ scope: 'test' },
 	],
@@ -728,10 +830,21 @@ export const test = base.extend<{ kit: TestDatabaseKit; db: TestDatabase; dbc: T
 		async ({ kit, task }, use) => {
 			const { db, release, retire } = await kit.acquireTx();
 			await use(db);
-			// A failed test leaves the connection to the next one in an unknown state, or still in use.
-			if (task.result?.state === 'fail' || task.result?.errors?.length) return retire();
-			await db.clear();
-			release();
+			await giveBack(db, task, release, retire);
+		},
+		{ scope: 'test' },
+	],
+
+	// A throwaway multi-region database per test, apart from the pooled ones, which stay single-region.
+	// Wrap suites using it in describe.skipIf(!(await clusterHasRegions())).
+	mrdb: [
+		async ({}, use) => { // oxlint-disable-line no-empty-pattern
+			const { db, drop } = await prepareMultiRegionDatabase(cockroachUrl());
+			try {
+				await use(db);
+			} finally {
+				await drop();
+			}
 		},
 		{ scope: 'test' },
 	],
