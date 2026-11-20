@@ -16,7 +16,7 @@ import { parseArray } from '../../utils/parse-pgarray';
 import { parse, stringify } from '../../utils/when-json-met-bigint';
 import { hash } from '../common';
 import { escapeForSqlTemplate, numberForTs, parseParams } from '../grammar';
-import type { CockroachEntities, Column, DiffEntities } from './ddl';
+import type { CockroachEntities, Column, DiffEntities, Locality } from './ddl';
 import type { Import } from './typescript';
 
 export const splitSqlType = (sqlType: string) => {
@@ -1823,4 +1823,34 @@ export const typeFor = (type: string, isEnum: boolean): SqlType => {
 	if (GeometryPoint.is(type)) return GeometryPoint;
 	if (Inet.is(type)) return Inet;
 	return Custom;
+};
+
+// The `LOCALITY` clause text, as CockroachDB writes it in `SHOW TABLES`. null is the default locality.
+export const localityToSQL = (locality: Locality): string => {
+	if (!locality) return 'REGIONAL BY TABLE IN PRIMARY REGION';
+	switch (locality.type) {
+		case 'global':
+			return 'GLOBAL';
+		case 'regionalByTable':
+			return `REGIONAL BY TABLE IN ${locality.region ? `"${locality.region}"` : 'PRIMARY REGION'}`;
+		case 'regionalByRow':
+			return `REGIONAL BY ROW${locality.as ? ` AS "${locality.as}"` : ''}`;
+	}
+};
+
+// Parses the locality text of SHOW TABLES back into the tables entity's `locality`.
+export const parseLocality = (text: string | null): Locality => {
+	if (!text || text === 'REGIONAL BY TABLE IN PRIMARY REGION') return null;
+	if (text === 'GLOBAL') return { type: 'global', region: null, as: null };
+
+	const unquote = (it: string) => it.startsWith('"') && it.endsWith('"') ? it.slice(1, -1).replaceAll('""', '"') : it;
+
+	const inRegion = /^REGIONAL BY TABLE IN (.+)$/.exec(text);
+	if (inRegion) return { type: 'regionalByTable', region: unquote(inRegion[1]!), as: null };
+
+	if (text === 'REGIONAL BY ROW') return { type: 'regionalByRow', region: null, as: null };
+	const byRowAs = /^REGIONAL BY ROW AS (.+)$/.exec(text);
+	if (byRowAs) return { type: 'regionalByRow', region: null, as: unquote(byRowAs[1]!) };
+
+	throw new Error(`Unknown CockroachDB table locality: ${text}`);
 };

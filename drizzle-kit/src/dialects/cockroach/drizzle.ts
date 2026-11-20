@@ -4,6 +4,7 @@ import type {
 	AnyCockroachColumn,
 	AnyCockroachTable,
 	CockroachEnum,
+	CockroachLocality,
 	CockroachMaterializedView,
 	CockroachSequence,
 	UpdateDeleteAction,
@@ -43,6 +44,7 @@ import type {
 	InterimColumn,
 	InterimIndex,
 	InterimSchema,
+	Locality,
 	Policy,
 	PrimaryKey,
 	Schema,
@@ -63,6 +65,18 @@ import {
 	trimDefaultValueSuffix,
 	typeFor,
 } from './grammar';
+
+// null is CockroachDB's default locality, REGIONAL BY TABLE IN PRIMARY REGION, which a table without a locality and
+// regionalByTable() with no region both get.
+export const localityFrom = (locality: CockroachLocality | undefined): Locality => {
+	if (!locality) return null;
+	if (locality.type === 'regionalByTable' && !locality.in) return null;
+	return {
+		type: locality.type,
+		region: locality.in ?? null,
+		as: locality.as?.name ?? null,
+	};
+};
 
 export const policyFrom = (policy: CockroachPolicy, dialect: CockroachDialect) => {
 	const mappedTo = !policy.to
@@ -301,6 +315,7 @@ export const fromDrizzleSchema = (
 			schema,
 			name: config.name,
 			isRlsEnabled,
+			locality: localityFrom(config.locality),
 		} satisfies CockroachEntities['tables'];
 	});
 

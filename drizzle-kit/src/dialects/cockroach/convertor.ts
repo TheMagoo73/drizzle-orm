@@ -1,5 +1,5 @@
 import { escapeSingleQuotes, type Simplify } from '../../utils';
-import { defaultNameForPK, defaults, defaultToSQL, isDefaultAction } from './grammar';
+import { defaultNameForPK, defaults, defaultToSQL, isDefaultAction, localityToSQL } from './grammar';
 import type { JsonStatement } from './statements';
 
 export const convertor = <
@@ -63,7 +63,7 @@ const moveViewConvertor = convertor('move_view', (st) => {
 });
 
 const createTableConvertor = convertor('create_table', (st) => {
-	const { schema, name, columns, pk, checks, policies, isRlsEnabled, indexes } = st.table;
+	const { schema, name, columns, pk, checks, policies, isRlsEnabled, indexes, locality } = st.table;
 
 	const uniqueIndexes = indexes.filter((it) =>
 		it.isUnique && (!it.method || it.method === defaults.index.method) && !it.where
@@ -133,7 +133,7 @@ const createTableConvertor = convertor('create_table', (st) => {
 		statement += `\tCONSTRAINT "${check.name}" CHECK (${check.value})`;
 	}
 
-	statement += `\n);`;
+	statement += `\n)${locality ? ` LOCALITY ${localityToSQL(locality)}` : ''};`;
 	statement += `\n`;
 	statements.push(statement);
 
@@ -711,6 +711,11 @@ const recreatePolicy = convertor('recreate_policy', (st) => {
 	];
 });
 
+const alterLocalityConvertor = convertor('alter_locality', (st) => {
+	const key = st.schema !== 'public' ? `"${st.schema}"."${st.name}"` : `"${st.name}"`;
+	return `ALTER TABLE ${key} SET LOCALITY ${localityToSQL(st.to)};`;
+});
+
 const toggleRlsConvertor = convertor('alter_rls', (st) => {
 	const { schema, name, isRlsEnabled } = st;
 
@@ -770,6 +775,7 @@ const convertors = [
 	alterPolicyConvertor,
 	recreatePolicy,
 	toggleRlsConvertor,
+	alterLocalityConvertor,
 	alterPrimaryKeyConvertor,
 	alterColumnAddNotNullConvertor,
 	alterColumnDropNotNullConvertor,

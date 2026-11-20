@@ -5,7 +5,17 @@ import { assertUnreachable, trimChar } from '../../utils';
 import { escapeForSqlTemplate, escapeForTsLiteral } from '../grammar';
 import { withCasing } from '../pull-utils';
 import { inspect } from '../utils';
-import type { CheckConstraint, CockroachDDL, Column, ForeignKey, Index, Policy, PrimaryKey, ViewColumn } from './ddl';
+import type {
+	CheckConstraint,
+	CockroachDDL,
+	Column,
+	ForeignKey,
+	Index,
+	Locality,
+	Policy,
+	PrimaryKey,
+	ViewColumn,
+} from './ddl';
 import { tableFromDDL } from './ddl';
 import { defaultNameForFK, defaultNameForPK, defaults, typeFor } from './grammar';
 
@@ -234,6 +244,7 @@ export const ddlToTypeScript = (ddl: CockroachDDL, columnsForViews: ViewColumn[]
 		if (x.entityType === 'schemas' && x.name !== 'public') imports.add('cockroachSchema');
 		if (x.entityType === 'enums' && x.schema === 'public') imports.add('cockroachEnum');
 		if (x.entityType === 'tables') imports.add(tableFn);
+		if (x.entityType === 'tables' && x.locality) imports.add('locality');
 
 		if (x.entityType === 'indexes') {
 			if (x.isUnique) imports.add('uniqueIndex');
@@ -373,7 +384,8 @@ export const ddlToTypeScript = (ddl: CockroachDDL, columnsForViews: ViewColumn[]
 			|| callbackFks.length > 0
 			|| table.policies.length > 0
 			|| primaryKeyType === 'callback'
-			|| table.checks.length > 0;
+			|| table.checks.length > 0
+			|| table.locality !== null;
 
 		if (hasCallback) {
 			statement += ', ';
@@ -385,6 +397,7 @@ export const ddlToTypeScript = (ddl: CockroachDDL, columnsForViews: ViewColumn[]
 			statement += createTableIndexes(table.name, table.indexes, casing);
 			statement += createTablePolicies(table.policies, casing, rolesNameToTsKey);
 			statement += createTableChecks(table.checks, casing);
+			statement += createTableLocality(table.locality, casing);
 			statement += ']';
 		}
 		statement += ');';
@@ -669,6 +682,16 @@ const createTablePolicies = (
 	});
 
 	return statement;
+};
+
+// Nothing for null, the default locality.
+const createTableLocality = (it: Locality, casing: Casing) => {
+	if (!it) return '';
+	if (it.type === 'global') return '\tlocality.global(),\n';
+	if (it.type === 'regionalByTable') {
+		return `\tlocality.regionalByTable(${it.region ? `{ in: ${escapeForTsLiteral(it.region)} }` : ''}),\n`;
+	}
+	return `\tlocality.regionalByRow(${it.as ? `{ as: table.${withCasing(it.as, casing)} }` : ''}),\n`;
 };
 
 const createTableChecks = (checkConstraints: CheckConstraint[], _casing: Casing) => {

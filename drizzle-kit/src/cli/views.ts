@@ -5,6 +5,7 @@ import type {
 	SchemaError as CockroachSchemaError,
 	SchemaWarning as CockroachSchemaWarning,
 } from '../dialects/cockroach/ddl';
+import { localityToSQL } from '../dialects/cockroach/grammar';
 import type { JsonStatement as StatementCockroach } from '../dialects/cockroach/statements';
 import type { SchemaError as MssqlSchemaError } from '../dialects/mssql/ddl';
 import type { JsonStatement as StatementMssql } from '../dialects/mssql/statements';
@@ -476,6 +477,12 @@ export const cockroachExplain = (st: StatementCockroach) => {
 		const key = `${st.schema}.${st.name}`;
 		title = `${key} rls changed:\n`;
 		cause += `│ rlsEnabled: ${!st.isRlsEnabled} -> ${st.isRlsEnabled}\n`;
+	}
+
+	if (st.type === 'alter_locality') {
+		const key = `${st.schema}.${st.name}`;
+		title = `${key} locality changed:\n`;
+		cause += `│ locality: ${localityToSQL(st.from)} -> ${localityToSQL(st.to)}\n`;
 	}
 
 	if (st.type === 'alter_policy' || st.type === 'recreate_policy') {

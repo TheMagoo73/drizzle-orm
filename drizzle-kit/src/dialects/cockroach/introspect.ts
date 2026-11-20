@@ -22,6 +22,7 @@ import type {
 import {
 	defaultForColumn,
 	isSystemNamespace,
+	parseLocality,
 	parseOnType,
 	parseViewDefinition,
 	stringFromDatabaseIdentityProperty as parseIdentityProperty,
@@ -202,8 +203,24 @@ export const fromDatabase = async (
 			schema: table.schema,
 			name: table.name,
 			isRlsEnabled: table.rlsEnabled,
+			locality: null,
 		});
 	}
+
+	// SHOW TABLES, not crdb_internal.tables, which v26.4 restricts. locality is NULL in a database that isn't
+	// multi-region, and the default text in one that is; both parse to null.
+	const localitiesQuery = db
+		.query<{ schema: string; name: string; locality: string | null }>(
+			`SELECT schema_name AS "schema", table_name AS "name", locality FROM [SHOW TABLES] WHERE type = 'table';`,
+		)
+		.then((rows) => {
+			queryCallback('localities', rows, null);
+			return rows;
+		})
+		.catch((err) => {
+			queryCallback('localities', [], err);
+			throw err;
+		});
 
 	const dependQuery = db
 		.query<{
@@ -269,6 +286,8 @@ export const fromDatabase = async (
 			WHERE
 				pg_type.typtype OPERATOR(pg_catalog.=) 'e'
 				AND nspname IN (${filteredNamespacesStringForSQL})
+				-- The regions enum of a multi-region database. CockroachDB owns it.
+				AND NOT (nspname OPERATOR(pg_catalog.=) 'public' AND typname OPERATOR(pg_catalog.=) 'crdb_internal_region')
 			ORDER BY pg_type.oid, pg_enum.enumsortorder
 		`,
 		)
@@ -567,6 +586,7 @@ export const fromDatabase = async (
 		extraColumnDataTypesList,
 		defaultsList,
 		viewDefinitionsList,
+		localitiesList,
 	] = await Promise.all([
 		dependQuery,
 		enumsQuery,
@@ -579,7 +599,13 @@ export const fromDatabase = async (
 		extraColumnDataTypesQuery,
 		defaultsQuery,
 		viewDefinitionsQuery,
+		localitiesQuery,
 	]);
+
+	for (const it of localitiesList) {
+		const table = tables.find((t) => t.schema === it.schema && t.name === it.name);
+		if (table) table.locality = parseLocality(it.locality);
+	}
 
 	const compareLower = (a: string, b: string) => {
 		const [x, y] = [a.toLowerCase(), b.toLowerCase()];

@@ -6,6 +6,7 @@ import type {
 	Enum,
 	ForeignKey,
 	Index,
+	Locality,
 	Policy,
 	PrimaryKey,
 	Role,
@@ -173,6 +174,15 @@ export interface JsonRenamePolicy {
 	type: 'rename_policy';
 	from: Policy;
 	to: Policy;
+}
+
+// ALTER TABLE ... SET LOCALITY, which CockroachDB won't combine with other ALTER TABLE subcommands.
+export interface JsonAlterLocality {
+	type: 'alter_locality';
+	schema: string;
+	name: string;
+	from: Locality;
+	to: Locality;
 }
 
 export interface JsonAlterRLS {
@@ -422,6 +432,7 @@ export type JsonStatement =
 	| JsonRecreatePolicy
 	| JsonRenamePolicy
 	| JsonAlterRLS
+	| JsonAlterLocality
 	| JsonRenameRole
 	| JsonCreateRole
 	| JsonDropRole

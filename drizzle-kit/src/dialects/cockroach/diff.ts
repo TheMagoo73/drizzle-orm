@@ -610,6 +610,18 @@ export const ddlDiff = async (
 			}
 		});
 
+	const jsonAlterLocalities = alters
+		.filter((it) => it.entityType === 'tables')
+		.filter((it) => it.locality)
+		.map((it) =>
+			prepareStatement('alter_locality', {
+				schema: it.schema,
+				name: it.name,
+				from: it.locality!.from,
+				to: it.locality!.to,
+			})
+		);
+
 	// explicit rls alters
 	const rlsAlters = alters.filter((it) => it.entityType === 'tables').filter((it) => it.isRlsEnabled);
 
@@ -946,6 +958,8 @@ export const ddlDiff = async (
 	jsonStatements.push(...jsonAlteredPKs);
 	jsonStatements.push(...jsonRecreatePk);
 	jsonStatements.push(...jsonAlterDropNotNull);
+	// After column adds and alters and PK changes, before column drops, so a region column can come or go with it.
+	jsonStatements.push(...jsonAlterLocalities);
 
 	jsonStatements.push(...jsonCreateFKs);
 	jsonStatements.push(...jsonRecreateFKs);
