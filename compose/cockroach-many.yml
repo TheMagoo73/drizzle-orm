@@ -3,7 +3,7 @@ services:
     image: cockroachdb/cockroach:v25.2.0
     network_mode: bridge
     mem_limit: 3g
-    command: start-single-node --insecure --store=type=mem,size=2GiB
+    command: start-single-node --insecure --store=type=mem,size=2GiB --locality=region=us-east1
     ports:
       - "${DRIZZLE_PORT_COCKROACH_MANY0:-26260}:26257"
       - "${DRIZZLE_PORT_COCKROACH_MANY0_CONSOLE:-18081}:8080" # web console
@@ -17,7 +17,7 @@ services:
     image: cockroachdb/cockroach:v25.2.0
     network_mode: bridge
     mem_limit: 3g
-    command: start-single-node --insecure --store=type=mem,size=2GiB
+    command: start-single-node --insecure --store=type=mem,size=2GiB --locality=region=us-east1
     ports:
       - "${DRIZZLE_PORT_COCKROACH_MANY1:-26261}:26257"
       - "${DRIZZLE_PORT_COCKROACH_MANY1_CONSOLE:-18082}:8080" # web console
@@ -31,7 +31,7 @@ services:
     image: cockroachdb/cockroach:v25.2.0
     network_mode: bridge
     mem_limit: 3g
-    command: start-single-node --insecure --store=type=mem,size=2GiB
+    command: start-single-node --insecure --store=type=mem,size=2GiB --locality=region=us-east1
     ports:
       - "${DRIZZLE_PORT_COCKROACH_MANY2:-26262}:26257"
       - "${DRIZZLE_PORT_COCKROACH_MANY2_CONSOLE:-18083}:8080" # web console

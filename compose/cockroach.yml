@@ -3,7 +3,7 @@ services:
     image: cockroachdb/cockroach:v25.2.0
     network_mode: bridge
     mem_limit: 3g
-    command: start-single-node --insecure --store=type=mem,size=2GiB
+    command: start-single-node --insecure --store=type=mem,size=2GiB --locality=region=us-east1
     ports:
       - "${DRIZZLE_PORT_COCKROACH:-26257}:26257"
       - "${DRIZZLE_PORT_COCKROACH_CONSOLE:-18080}:8080" # web console
